@@ -1,0 +1,59 @@
+{
+  "targetOrg": "none",
+  "objects": [
+    {
+      "object": "ExpressionSet",
+      "externalId": "ApiName",
+      "fields": [
+        "Name",
+        "Description",
+        "ApiName",
+        "ExpressionSetDefinition.DeveloperName",
+        "UsageType",
+        "InterfaceSourceType",
+        "ExecutionScale",
+        "ResourceInitializationType"
+      ],
+      "query": "SELECT Name, Description, ApiName, ExpressionSetDefinition.DeveloperName, UsageType, InterfaceSourceType, ExecutionScale, ResourceInitializationType FROM ExpressionSet",
+      "order": 1
+    },
+    {
+      "object": "ExpressionSetVersion",
+      "externalId": "ApiName",
+      "fields": [
+        "Name",
+        "Description",
+        "ExpressionSetId",
+        "StartDateTime",
+        "EndDateTime",
+        "VersionNumber",
+        "Rank",
+        "IsActive",
+        "IsLoopingEnabled",
+        "LoopStartVariableName",
+        "LoopIncrementVariableName",
+        "LoopEndVariableName",
+        "LatestSimulationResult",
+        "ApiName",
+        "ExpressionSetDefinitionVer.DeveloperName",
+        "ShouldShowExplExternally",
+        "DecimalScale"
+      ],
+      "query": "SELECT Name, Description, ExpressionSetId, StartDateTime, EndDateTime, VersionNumber, Rank, IsActive, IsLoopingEnabled, LoopStartVariableName, LoopIncrementVariableName, LoopEndVariableName, LatestSimulationResult, ApiName, ExpressionSetDefinitionVer.DeveloperName, ShouldShowExplExternally, DecimalScale FROM ExpressionSetVersion",
+      "order": 2
+    },
+    {
+      "object": "ExpressionSetConstraintObj",
+      "externalId": "Name",
+      "fields": [
+        "Name",
+        "ExpressionSetId",
+        "ReferenceObjectId",
+        "ConstraintModelTag",
+        "ConstraintModelTagType"
+      ],
+      "query": "SELECT Name, ExpressionSetId, ReferenceObjectId, ConstraintModelTag, ConstraintModelTagType FROM ExpressionSetConstraintObj",
+      "order": 3
+    }
+  ]
+}
