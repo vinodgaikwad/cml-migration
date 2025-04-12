@@ -15,17 +15,21 @@ dev_name = args.developerName.strip()
 version_num = args.version.strip()
 api_name_versioned = f"{dev_name}_V{version_num}"
 
-# === Nested child reader helper Helper ===    
+# === Nested child reader helper ===
 def get_field_value(rec, field):
     if "." in field:
         parent, child = field.split(".", 1)
-        return rec.get(parent, {}).get(child, "")
+        parent_obj = rec.get(parent)
+        if parent_obj and isinstance(parent_obj, dict):
+            return parent_obj.get(child, "")
+        return ""
     return rec.get(field, "")
 
 # === Export CSV Helper ===
 def export_to_csv(query, filename, fields, alias="srcOrg"):
     print(f"📦 Exporting: {filename.replace('data/', '')}")
-
+    print("🔍 SOQL Query:", query.strip())
+    
     try:
         result = subprocess.run(
             ["sf", "org", "display", "--target-org", alias, "--json"],
@@ -159,6 +163,18 @@ export_to_csv(
 
 export_to_csv(
     query=f"""
+        SELECT ContextDefinitionApiName, ContextDefinitionId, ExpressionSetApiName, ExpressionSetDefinitionId
+        FROM ExpressionSetDefinitionContextDefinition
+        WHERE ExpressionSetDefinition.DeveloperName = '{dev_name}'
+    """,
+    filename="data/ExpressionSetDefinitionContextDefinition.csv",
+    fields=[
+        "ContextDefinitionApiName", "ContextDefinitionId", "ExpressionSetApiName", "ExpressionSetDefinitionId"
+    ]
+)
+
+export_to_csv(
+    query=f"""
         SELECT ApiName, Description, ExpressionSetDefinitionId, Id,
                InterfaceSourceType, Name, ResourceInitializationType, UsageType
         FROM ExpressionSet
@@ -230,7 +246,7 @@ export_to_csv(
                ParentProductId, ParentProduct.Name,
                ChildProductId, ChildProduct.Name,
                ChildProductClassificationId, ChildProductClassification.Name,
-               ProductRelationshipTypeId, ProductRelationshipType.Name
+               ProductRelationshipTypeId, ProductRelationshipType.Name, Sequence
         FROM ProductRelatedComponent
         WHERE Id IN (%s)
     """ % ",".join(f"'{i}'" for i in component_ids) if component_ids else "SELECT Id, Name FROM ProductRelatedComponent WHERE Id = '000000000000000AAA'",
@@ -240,7 +256,7 @@ export_to_csv(
         "ParentProductId", "ParentProduct.Name",
         "ChildProductId", "ChildProduct.Name",
         "ChildProductClassificationId", "ChildProductClassification.Name",
-        "ProductRelationshipTypeId", "ProductRelationshipType.Name"
+        "ProductRelationshipTypeId", "ProductRelationshipType.Name","Sequence"
     ]
 )
 

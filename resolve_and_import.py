@@ -72,6 +72,7 @@ def main():
 
     # Load all input data
     esdv = read_csv("ExpressionSetDefinitionVersion.csv")[0]
+    esdcd = read_csv("ExpressionSetDefinitionContextDefinition.csv")[0]
     ess = read_csv("ExpressionSet.csv")[0]
     esv = read_csv("ExpressionSetVersion.csv")[0]
     esc_list = read_csv("ExpressionSetConstraintObj.csv")
@@ -91,7 +92,7 @@ def main():
     esv.pop("ExpressionSet.ApiName", None)
     esv.pop("ExpressionSetDefinitionVerId", None)
     esv["ExpressionSetId"] = ess_id
-
+    
     # Resolve ExpressionSetDefinitionVersion ID by DeveloperName
     devname = esv["ApiName"]
     query_url = f"{instance_url}/services/data/v64.0/query"
@@ -105,7 +106,115 @@ def main():
     esdv_id = resp.json()["records"][0]["Id"]
     esv["ExpressionSetDefinitionVerId"] = esdv_id
 
-    esv_id = create_record("ExpressionSetVersion", esv, access_token, instance_url)
+    #esv_id = create_record("ExpressionSetVersion", esv, access_token, instance_url)
+    
+    
+    # === Insert ExpressionSetDefinitionContextDefinition
+    apiname = ess["ApiName"]
+    cd_apiname = esdcd["ContextDefinitionApiName"]
+    esdcd.pop("ContextDefinitionApiName", None)
+    esdcd.pop("ExpressionSetApiName", None)
+    
+    # Resolve ContextDefinition ID by DeveloperName
+    q = f"SELECT Id FROM ContextDefinition WHERE DeveloperName = '{cd_apiname}'"
+    resp = requests.get(query_url, headers=headers, params={"q": q})
+
+    if resp.status_code != 200 or not resp.json().get("records"):
+        print(f"❌ Could not find ContextDefinition for {cd_apiname}")
+        return
+    cd_id = resp.json()["records"][0]["Id"]
+    esdcd["ContextDefinitionId"] = cd_id
+    
+    # Resolve ExpressionSetDefinition ID by DeveloperName
+    q = f"SELECT Id FROM ExpressionSetDefinition WHERE DeveloperName = '{apiname}'"
+    resp = requests.get(query_url, headers=headers, params={"q": q})
+
+    if resp.status_code != 200 or not resp.json().get("records"):
+        print(f"❌ Could not find ExpressionSetDefinition for {apiname}")
+        return
+    esd_id = resp.json()["records"][0]["Id"]
+    esdcd["ExpressionSetDefinitionId"] = esd_id
+	
+    create_record("ExpressionSetDefinitionContextDefinition", esdcd, access_token, instance_url)
+
+
+    # === Build lookup maps for ReferenceObjectId resolution ===
+    print("🔁 Building legacy ID to Unique Key (UK) maps...")
+
+    legacy_to_uk = {}
+    product_names = set()
+    classification_names = set()
+    prc_parent_names = set()
+
+    # Product2
+    for row in read_csv("Product2.csv"):
+        legacy_id = row["Id"]
+        name = row["Name"]
+        product_names.add(name)
+        legacy_to_uk[legacy_id] = name  # UK for Product2 is just Name
+
+    # ProductClassification
+    for row in read_csv("ProductClassification.csv"):
+        legacy_id = row["Id"]
+        name = row["Name"]
+        classification_names.add(name)
+        legacy_to_uk[legacy_id] = name  # UK for Classification is just Name
+
+    # ProductRelatedComponent
+    for row in read_csv("ProductRelatedComponent.csv"):
+        legacy_id = row["Id"]
+        uk = (
+            row["ParentProduct.Name"] + "|" +
+            (row.get("ChildProduct.Name") or "") + "|" +
+            (row.get("ChildProductClassification.Name") or "") + "|" +
+            (row.get("ProductRelationshipType.Name") or "") + "|" +
+            (row.get("Sequence") or "")
+        )
+        prc_parent_names.add(row["ParentProduct.Name"])
+        legacy_to_uk[legacy_id] = uk
+
+    print("📡 Querying target org for new IDs...")
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    query_url = f"{instance_url}/services/data/v64.0/query"
+
+    # Query target org for Product2
+    prod_filter = ",".join(f"'{n}'" for n in product_names)
+    q1 = f"SELECT Id, Name FROM Product2 WHERE Name IN ({prod_filter})"
+    resp1 = requests.get(query_url, headers=headers, params={"q": q1})
+    uk_to_targetId_prod = {r["Name"]: r["Id"] for r in resp1.json().get("records", [])}
+
+    # Query target org for ProductClassification
+    class_filter = ",".join(f"'{n}'" for n in classification_names)
+    q2 = f"SELECT Id, Name FROM ProductClassification WHERE Name IN ({class_filter})"
+    resp2 = requests.get(query_url, headers=headers, params={"q": q2})
+    uk_to_targetId_class = {r["Name"]: r["Id"] for r in resp2.json().get("records", [])}
+
+    # Query target org for ProductRelatedComponent
+    prc_filter = ",".join(f"'{n}'" for n in prc_parent_names)
+    q3 = f"""
+    SELECT Id,
+        ParentProduct.Name,
+        ChildProduct.Name,
+        ChildProductClassification.Name,
+        ProductRelationshipType.Name, Sequence
+    FROM ProductRelatedComponent
+    WHERE ParentProduct.Name IN ({prc_filter})
+    """
+    resp3 = requests.get(query_url, headers=headers, params={"q": q3})
+    uk_to_targetId_prc = {
+    (
+        r["ParentProduct"]["Name"] + "|" +
+        (r["ChildProduct"]["Name"] if r.get("ChildProduct") else "") + "|" +
+        (r["ChildProductClassification"]["Name"] if r.get("ChildProductClassification") else "") + "|" +
+        (r["ProductRelationshipType"]["Name"] if r.get("ProductRelationshipType") else "") + "|" +
+        (str(r["Sequence"]) if r.get("Sequence") is not None else "")
+    ): r["Id"]
+    for r in resp3.json().get("records", [])
+    if r.get("ParentProduct")
+    }
+
+    print("🔁 Maps ready. Resolving ReferenceObjectIds...")
 
     # === Insert ExpressionSetConstraintObj
     for row in esc_list:
@@ -116,21 +225,19 @@ def main():
         ref_id = row.get("ReferenceObjectId", "")
         resolved_id = None
 
-        if ref_id.startswith("01t"):  # Product2
-            match = next((v["Id"] for v in products.values() if v["Id"] == ref_id), None)
-            resolved_id = match
-        elif ref_id.startswith("11B"):  # ProductClassification
-            match = next((v["Id"] for v in classifications.values() if v["Id"] == ref_id), None)
-            resolved_id = match
-        elif ref_id.startswith("0dS"):  # ProductRelatedComponent
-            match = next((k for k, v in components.items() if v == ref_id), None)
-            resolved_id = components.get(match)
+        uk = legacy_to_uk.get(ref_id)
+        if ref_id.startswith("01t"):
+            resolved_id = uk_to_targetId_prod.get(uk)
+        elif ref_id.startswith("11B"):
+            resolved_id = uk_to_targetId_class.get(uk)
+        elif ref_id.startswith("0dS"):
+            resolved_id = uk_to_targetId_prc.get(uk)
 
         if resolved_id:
             row["ReferenceObjectId"] = resolved_id
             create_record("ExpressionSetConstraintObj", row, access_token, instance_url)
         else:
-            print(f"⚠️ Could not resolve ReferenceObjectId: {ref_id}")
+            print(f"⚠️ Could not resolve ReferenceObjectId: {ref_id} → UK: {uk}")
 
     # === Upload Blob
     version = esdv.get("VersionNumber")
