@@ -54,6 +54,51 @@ def upload_blob(record_id, blob_path, access_token, instance_url):
     else:
         print(f"⚠️ Blob upload failed → {record_id}: {resp.status_code} - {resp.text}")
 
+def update_constraint_model_blob(record_id, blob_path, access_token, instance_url):
+    url = f"{instance_url}/services/data/v64.0/sobjects/ExpressionSetDefinitionVersion/{record_id}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    with open(blob_path, "rb") as f:
+        blob_data = f.read()
+
+    payload = {
+        "ConstraintModel": blob_data.decode("latin1")  # base64 bytes as string
+    }
+
+    resp = requests.patch(url, headers=headers, json=payload)
+    if resp.status_code == 204:
+        print(f"📦 ConstraintModel updated successfully → {record_id}")
+    else:
+        print(f"⚠️ Failed to update ConstraintModel → {record_id}: {resp.status_code} - {resp.text}")
+
+import base64
+
+def upload_blob_via_patch(record_id, blob_path, access_token, instance_url):
+    # Build the endpoint for the record (omitting the /ConstraintModel sub-path)
+    url = f"{instance_url}/services/data/v64.0/sobjects/ExpressionSetDefinitionVersion/{record_id}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    # Read blob as binary and base64 encode it
+    with open(blob_path, "rb") as f:
+        blob_data = f.read()
+    encoded_blob = base64.b64encode(blob_data).decode("utf-8")
+    # Prepare payload; the ConstraintModel field expects a base64 string.
+    payload = {
+        "ConstraintModel": encoded_blob
+    }
+    # Use PATCH to update the record
+    resp = requests.patch(url, headers=headers, json=payload)
+    if resp.status_code == 204:
+        print(f"📦 Uploaded blob via PATCH → {record_id}")
+    else:
+        print(f"⚠️ Blob upload failed → {record_id}: {resp.status_code} - {resp.text}")
+
+
 # === FK Resolution Helpers ===
 def index_by_field(data, key):
     return {row[key]: row for row in data if key in row and row[key]}
@@ -243,7 +288,7 @@ def main():
     version = esdv.get("VersionNumber")
     blob_file = os.path.join(BLOB_DIR, f"ESDV_{devname.replace('_V' + version, '')}_V{version}.ffxblob")
     if os.path.exists(blob_file):
-        upload_blob(esdv_id, blob_file, access_token, instance_url)
+        upload_blob_via_patch(esdv_id, blob_file, access_token, instance_url)
     else:
         print(f"⚠️ Blob file missing: {blob_file}")
 
