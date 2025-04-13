@@ -8,6 +8,10 @@ DATA_DIR = "data"
 BLOB_DIR = os.path.join(DATA_DIR, "blobs")
 TARGET_ALIAS = "tgtOrg"
 
+access_token = None
+instance_url = None
+api_version = None
+headers = {}
 
 def get_latest_api_version(instance_url):
     resp = requests.get(f"{instance_url}/services/data/")
@@ -36,10 +40,6 @@ def read_csv(filename):
 # === REST: POST ===
 def create_record(obj_name, record, access_token, instance_url, api_version):
     url = f"{instance_url}/services/data/v{api_version}/sobjects/{obj_name}/"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
 
     record.pop("Id", None)
     resp = requests.post(url, headers=headers, json=record)
@@ -49,6 +49,87 @@ def create_record(obj_name, record, access_token, instance_url, api_version):
     else:
         print(f"❌ Failed {obj_name}: {resp.status_code} - {resp.text}")
         return None
+    
+def upsert_expression_set(record, access_token, instance_url, api_version):
+    obj_name = "ExpressionSet"
+    api_name = record.get("ApiName")
+    if not api_name:
+        print("❌ ExpressionSet record missing ApiName. Skipping.")
+        return None
+
+    # Query to see if the ExpressionSet exists
+    query_url = f"{instance_url}/services/data/v{api_version}/query"
+    soql = f"SELECT Id FROM {obj_name} WHERE ApiName = '{api_name}'"
+    resp = requests.get(query_url, headers=headers, params={"q": soql})
+
+    if resp.status_code != 200:
+        print(f"❌ Failed to query for ExpressionSet {api_name}: {resp.status_code} - {resp.text}")
+        return None
+
+    records = resp.json().get("records", [])
+    record.pop("ExpressionSetDefinitionId", None)
+    
+    if records:
+        # UPDATE (PATCH)
+        record_id = records[0]["Id"]
+        patch_url = f"{instance_url}/services/data/v{api_version}/sobjects/{obj_name}/{record_id}"
+        record.pop("ApiName", None)  # Don't include ApiName in the body
+        patch_resp = requests.patch(patch_url, headers=headers, json=record)
+        record["ApiName"] = api_name  # 👈 Put it back
+        if patch_resp.status_code in [204, 200]:
+            print(f"🔁 Updated ExpressionSet → {api_name}")
+            return record_id
+        else:
+            print(f"❌ Failed to update ExpressionSet: {patch_resp.status_code} - {patch_resp.text}")
+            return None
+    else:
+        # CREATE (POST)
+        print(f"➕ Creating new ExpressionSet → {api_name}")
+        return create_record(obj_name, record, access_token, instance_url, api_version)
+
+
+def upsert_esdcd(record, access_token, instance_url, api_version):
+    obj_name = "ExpressionSetDefinitionContextDefinition"
+    context_id = record.get("ContextDefinitionId")
+    esd_id = record.get("ExpressionSetDefinitionId")
+
+    if not context_id or not esd_id:
+        print("❌ Missing ContextDefinitionId or ExpressionSetDefinitionId for ESDCD.")
+        return None
+
+    # Query for existence
+    soql = f"""
+        SELECT Id FROM {obj_name}
+        WHERE ExpressionSetDefinitionId = '{esd_id}'
+    """
+    query_url = f"{instance_url}/services/data/v{api_version}/query"
+    resp = requests.get(query_url, headers=headers, params={"q": soql.strip()})
+
+    if resp.status_code != 200:
+        print(f"❌ Query failed for ESDCD: {resp.status_code} - {resp.text}")
+        return None
+
+    found = resp.json().get("records", [])
+
+    if found:
+        record_id = found[0]["Id"]
+        print("✅ ExpressionSetDefinitionContextDefinition already exists. Updating ContextDefinitionId...")
+
+        # Only update ContextDefinitionId
+        patch_url = f"{instance_url}/services/data/v{api_version}/sobjects/{obj_name}/{record_id}"
+        patch_body = { "ContextDefinitionId": context_id }
+
+        patch_resp = requests.patch(patch_url, headers=headers, json=patch_body)
+        if patch_resp.status_code in [200, 204]:
+            print(f"🔁 Updated ContextDefinitionId on existing ESDCD → {record_id}")
+            return record_id
+        else:
+            print(f"❌ Failed to update ESDCD: {patch_resp.status_code} - {patch_resp.text}")
+            return None
+
+    print("➕ Creating ExpressionSetDefinitionContextDefinition")
+    return create_record(obj_name, record, access_token, instance_url, api_version)
+
 
 # === REST: PATCH blob ===
 import base64
@@ -56,10 +137,7 @@ import base64
 def upload_blob_via_patch(record_id, blob_path, access_token, instance_url, api_version):
     # Build the endpoint for the record (omitting the /ConstraintModel sub-path)
     url = f"{instance_url}/services/data/v{api_version}/sobjects/ExpressionSetDefinitionVersion/{record_id}"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
+
     # Read blob as binary and base64 encode it
     with open(blob_path, "rb") as f:
         blob_data = f.read()
@@ -77,10 +155,14 @@ def upload_blob_via_patch(record_id, blob_path, access_token, instance_url, api_
 
 # === MAIN ===
 def main():
+    global access_token, instance_url, api_version, headers
     access_token, instance_url = get_auth()
-
-    api_version = get_latest_api_version(instance_url)  # e.g., 'v64.0'
+    api_version = get_latest_api_version(instance_url) # e.g., '64.0'
     print(f"API Version is: {api_version}")
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
 
     # Load all input data
     esdv = read_csv("ExpressionSetDefinitionVersion.csv")[0]
@@ -90,7 +172,11 @@ def main():
 
     # === Insert ExpressionSet
     ess.pop("Id", None)
-    ess_id = create_record("ExpressionSet", ess, access_token, instance_url, api_version)
+    #ess_id = create_record("ExpressionSet", ess, access_token, instance_url, api_version)
+    ess_id = upsert_expression_set(ess, access_token, instance_url, api_version)
+    if not ess_id:
+        print("❌ Could not create or update ExpressionSet. Aborting.")
+        return
     
     # Resolve ExpressionSetDefinitionVersion ID by DeveloperName
     devname = esdv["DeveloperName"]
@@ -130,8 +216,8 @@ def main():
     esd_id = resp.json()["records"][0]["Id"]
     esdcd["ExpressionSetDefinitionId"] = esd_id
 	
-    create_record("ExpressionSetDefinitionContextDefinition", esdcd, access_token, instance_url, api_version)
-
+    #create_record("ExpressionSetDefinitionContextDefinition", esdcd, access_token, instance_url, api_version)
+    upsert_esdcd(esdcd, access_token, instance_url, api_version)
 
     # === Build lookup maps for ReferenceObjectId resolution ===
     print("🔁 Building legacy ID to Unique Key (UK) maps...")
@@ -211,16 +297,28 @@ def main():
 
     print("🔁 Maps ready. Resolving ReferenceObjectIds...")
 
-    # === Insert ExpressionSetConstraintObj
+
+     # === Insert ExpressionSetConstraintObj
+    print("📥 Importing ExpressionSetConstraintObj records...")
+
+    # Step 1: Query all current ESC objects for the ExpressionSet
+    esc_query = f"SELECT Id FROM ExpressionSetConstraintObj WHERE ExpressionSetId = '{ess_id}'"
+    resp = requests.get(query_url, headers=headers, params={"q": esc_query})
+    existing_esc_ids = [r["Id"] for r in resp.json().get("records", [])]
+
+    import_failed = False
+    new_count = 0
+
     for row in esc_list:
         row.pop("Id", None)
         row.pop("ExpressionSet.ApiName", None)
         row.pop("Name", None)
         row["ExpressionSetId"] = ess_id
+
         ref_id = row.get("ReferenceObjectId", "")
         resolved_id = None
-
         uk = legacy_to_uk.get(ref_id)
+
         if ref_id.startswith("01t"):
             resolved_id = uk_to_targetId_prod.get(uk)
         elif ref_id.startswith("11B"):
@@ -230,9 +328,29 @@ def main():
 
         if resolved_id:
             row["ReferenceObjectId"] = resolved_id
-            create_record("ExpressionSetConstraintObj", row, access_token, instance_url, api_version)
+            if not create_record("ExpressionSetConstraintObj", row, access_token, instance_url, api_version):
+                import_failed = True
+            else:
+                new_count += 1
         else:
             print(f"⚠️ Could not resolve ReferenceObjectId: {ref_id} → UK: {uk}")
+            import_failed = True
+
+    print(f"📊 {new_count} new ExpressionSetConstraintObj records created.")
+
+    # Step 2: Decide whether to delete the old records
+    if not import_failed:
+        print(f"🗑️ Deleting {len(existing_esc_ids)} old ExpressionSetConstraintObj records...")
+        for eid in existing_esc_ids:
+            del_url = f"{instance_url}/services/data/v{api_version}/sobjects/ExpressionSetConstraintObj/{eid}"
+            del_resp = requests.delete(del_url, headers=headers)
+            if del_resp.status_code not in [200, 204]:
+                print(f"⚠️ Failed to delete {eid}: {del_resp.status_code} - {del_resp.text}")
+        print("✅ Old records deleted.")
+    else:
+        print("⛔ Import encountered errors. Skipping deletion of existing ExpressionSetConstraintObj records.")
+        print("⚠️ Warning: Target org now contains a mix of old and new constraints. Manual cleanup may be needed.")
+           
 
     # === Upload Blob
     version = esdv.get("VersionNumber")
