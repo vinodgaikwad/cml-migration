@@ -8,6 +8,15 @@ DATA_DIR = "data"
 BLOB_DIR = os.path.join(DATA_DIR, "blobs")
 TARGET_ALIAS = "tgtOrg"
 
+
+def get_latest_api_version(instance_url):
+    resp = requests.get(f"{instance_url}/services/data/")
+    if resp.status_code == 200:
+        versions = resp.json()
+        return versions[-1]["version"]  # The last one is the latest
+    else:
+        raise Exception(f"Failed to retrieve API versions: {resp.status_code} - {resp.text}")
+
 # === Auth + Org Info ===
 def get_auth():
     result = subprocess.run(
@@ -25,12 +34,13 @@ def read_csv(filename):
         return list(csv.DictReader(f))
 
 # === REST: POST ===
-def create_record(obj_name, record, access_token, instance_url):
-    url = f"{instance_url}/services/data/v64.0/sobjects/{obj_name}/"
+def create_record(obj_name, record, access_token, instance_url, api_version):
+    url = f"{instance_url}/services/data/v{api_version}/sobjects/{obj_name}/"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
+
     record.pop("Id", None)
     resp = requests.post(url, headers=headers, json=record)
     if resp.status_code == 201:
@@ -40,45 +50,12 @@ def create_record(obj_name, record, access_token, instance_url):
         print(f"❌ Failed {obj_name}: {resp.status_code} - {resp.text}")
         return None
 
-# === REST: PUT blob ===
-def upload_blob(record_id, blob_path, access_token, instance_url):
-    url = f"{instance_url}/services/data/v64.0/sobjects/ExpressionSetDefinitionVersion/{record_id}/ConstraintModel"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/octet-stream"
-    }
-    with open(blob_path, "rb") as f:
-        resp = requests.put(url, headers=headers, data=f)
-    if resp.status_code == 204:
-        print(f"📦 Uploaded blob → {record_id}")
-    else:
-        print(f"⚠️ Blob upload failed → {record_id}: {resp.status_code} - {resp.text}")
-
-def update_constraint_model_blob(record_id, blob_path, access_token, instance_url):
-    url = f"{instance_url}/services/data/v64.0/sobjects/ExpressionSetDefinitionVersion/{record_id}"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    with open(blob_path, "rb") as f:
-        blob_data = f.read()
-
-    payload = {
-        "ConstraintModel": blob_data.decode("latin1")  # base64 bytes as string
-    }
-
-    resp = requests.patch(url, headers=headers, json=payload)
-    if resp.status_code == 204:
-        print(f"📦 ConstraintModel updated successfully → {record_id}")
-    else:
-        print(f"⚠️ Failed to update ConstraintModel → {record_id}: {resp.status_code} - {resp.text}")
-
+# === REST: PATCH blob ===
 import base64
 
-def upload_blob_via_patch(record_id, blob_path, access_token, instance_url):
+def upload_blob_via_patch(record_id, blob_path, access_token, instance_url, api_version):
     # Build the endpoint for the record (omitting the /ConstraintModel sub-path)
-    url = f"{instance_url}/services/data/v64.0/sobjects/ExpressionSetDefinitionVersion/{record_id}"
+    url = f"{instance_url}/services/data/v{api_version}/sobjects/ExpressionSetDefinitionVersion/{record_id}"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -98,49 +75,27 @@ def upload_blob_via_patch(record_id, blob_path, access_token, instance_url):
     else:
         print(f"⚠️ Blob upload failed → {record_id}: {resp.status_code} - {resp.text}")
 
-
-# === FK Resolution Helpers ===
-def index_by_field(data, key):
-    return {row[key]: row for row in data if key in row and row[key]}
-
-def composite_key(row):
-    return (
-        row.get("ParentProduct.Name", "") + "|" +
-        row.get("ChildProduct.Name", "") + "|" +
-        row.get("ChildProductClassification.Name", "") + "|" +
-        row.get("ProductRelationshipType.Name", "")
-    )
-
 # === MAIN ===
 def main():
     access_token, instance_url = get_auth()
+
+    api_version = get_latest_api_version(instance_url)  # e.g., 'v64.0'
+    print(f"API Version is: {api_version}")
 
     # Load all input data
     esdv = read_csv("ExpressionSetDefinitionVersion.csv")[0]
     esdcd = read_csv("ExpressionSetDefinitionContextDefinition.csv")[0]
     ess = read_csv("ExpressionSet.csv")[0]
-    esv = read_csv("ExpressionSetVersion.csv")[0]
+    #esv = read_csv("ExpressionSetVersion.csv")[0]
     esc_list = read_csv("ExpressionSetConstraintObj.csv")
-
-    products = index_by_field(read_csv("Product2.csv"), "Name")
-    classifications = index_by_field(read_csv("ProductClassification.csv"), "Name")
-    components = {composite_key(r): r["Id"] for r in read_csv("ProductRelatedComponent.csv")}
 
     # === Insert ExpressionSet
     ess.pop("Id", None)
-    ess_id = create_record("ExpressionSet", ess, access_token, instance_url)
-
-    # === Insert ExpressionSetVersion
-    esv.pop("Id", None)
-    esv.pop("IsActive", None)
-    esv.pop("IsDeleted", None)
-    esv.pop("ExpressionSet.ApiName", None)
-    esv.pop("ExpressionSetDefinitionVerId", None)
-    esv["ExpressionSetId"] = ess_id
+    ess_id = create_record("ExpressionSet", ess, access_token, instance_url, api_version)
     
     # Resolve ExpressionSetDefinitionVersion ID by DeveloperName
-    devname = esv["ApiName"]
-    query_url = f"{instance_url}/services/data/v64.0/query"
+    devname = esdv["DeveloperName"]
+    query_url = f"{instance_url}/services/data/v{api_version}/query"
     headers = { "Authorization": f"Bearer {access_token}" }
     q = f"SELECT Id FROM ExpressionSetDefinitionVersion WHERE DeveloperName = '{devname}'"
     resp = requests.get(query_url, headers=headers, params={"q": q})
@@ -149,11 +104,7 @@ def main():
         print(f"❌ Could not find ExpressionSetDefinitionVersion for {devname}")
         return
     esdv_id = resp.json()["records"][0]["Id"]
-    esv["ExpressionSetDefinitionVerId"] = esdv_id
 
-    #esv_id = create_record("ExpressionSetVersion", esv, access_token, instance_url)
-    
-    
     # === Insert ExpressionSetDefinitionContextDefinition
     apiname = ess["ApiName"]
     cd_apiname = esdcd["ContextDefinitionApiName"]
@@ -180,7 +131,7 @@ def main():
     esd_id = resp.json()["records"][0]["Id"]
     esdcd["ExpressionSetDefinitionId"] = esd_id
 	
-    create_record("ExpressionSetDefinitionContextDefinition", esdcd, access_token, instance_url)
+    create_record("ExpressionSetDefinitionContextDefinition", esdcd, access_token, instance_url, api_version)
 
 
     # === Build lookup maps for ReferenceObjectId resolution ===
@@ -221,7 +172,7 @@ def main():
     print("📡 Querying target org for new IDs...")
 
     headers = {"Authorization": f"Bearer {access_token}"}
-    query_url = f"{instance_url}/services/data/v64.0/query"
+    query_url = f"{instance_url}/services/data/v{api_version}/query"
 
     # Query target org for Product2
     prod_filter = ",".join(f"'{n}'" for n in product_names)
@@ -280,7 +231,7 @@ def main():
 
         if resolved_id:
             row["ReferenceObjectId"] = resolved_id
-            create_record("ExpressionSetConstraintObj", row, access_token, instance_url)
+            create_record("ExpressionSetConstraintObj", row, access_token, instance_url, api_version)
         else:
             print(f"⚠️ Could not resolve ReferenceObjectId: {ref_id} → UK: {uk}")
 
@@ -288,7 +239,7 @@ def main():
     version = esdv.get("VersionNumber")
     blob_file = os.path.join(BLOB_DIR, f"ESDV_{devname.replace('_V' + version, '')}_V{version}.ffxblob")
     if os.path.exists(blob_file):
-        upload_blob_via_patch(esdv_id, blob_file, access_token, instance_url)
+        upload_blob_via_patch(esdv_id, blob_file, access_token, instance_url, api_version)
     else:
         print(f"⚠️ Blob file missing: {blob_file}")
 
