@@ -86,7 +86,6 @@ def main():
     esdv = read_csv("ExpressionSetDefinitionVersion.csv")[0]
     esdcd = read_csv("ExpressionSetDefinitionContextDefinition.csv")[0]
     ess = read_csv("ExpressionSet.csv")[0]
-    #esv = read_csv("ExpressionSetVersion.csv")[0]
     esc_list = read_csv("ExpressionSetConstraintObj.csv")
 
     # === Insert ExpressionSet

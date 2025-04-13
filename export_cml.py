@@ -15,6 +15,15 @@ dev_name = args.developerName.strip()
 version_num = args.version.strip()
 api_name_versioned = f"{dev_name}_V{version_num}"
 
+# === API Version resolver helper ===
+def get_latest_api_version(instance_url):
+    resp = requests.get(f"{instance_url}/services/data/")
+    if resp.status_code == 200:
+        versions = resp.json()
+        return versions[-1]["version"]  # Use latest version
+    else:
+        raise Exception(f"Failed to retrieve API versions: {resp.status_code} - {resp.text}")
+
 # === Nested child reader helper ===
 def get_field_value(rec, field):
     if "." in field:
@@ -45,7 +54,8 @@ def export_to_csv(query, filename, fields, alias="srcOrg"):
         print(e)
         return
 
-    endpoint = f"{instance_url}/services/data/v64.0/query"
+    api_version = get_latest_api_version(instance_url)
+    endpoint = f"{instance_url}/services/data/v{api_version}/query"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -138,16 +148,6 @@ def get_reference_ids_by_prefix(filename, prefix):
 
 export_to_csv(
     query=f"""
-        SELECT DeveloperName, ExecutionScale, Id, Language, MasterLabel
-        FROM ExpressionSetDefinition
-        WHERE DeveloperName = '{dev_name}'
-    """,
-    filename="data/ExpressionSetDefinition.csv",
-    fields=["DeveloperName", "ExecutionScale", "Id", "Language", "MasterLabel"]
-)
-
-export_to_csv(
-    query=f"""
         SELECT ConstraintModel, DeveloperName, ExpressionSetDefinition.DeveloperName, ExpressionSetDefinitionId, Id, Language,
                MasterLabel, Status, VersionNumber
         FROM ExpressionSetDefinitionVersion
@@ -184,20 +184,6 @@ export_to_csv(
     fields=[
         "ApiName", "Description", "ExpressionSetDefinitionId", "Id",
         "InterfaceSourceType", "Name", "ResourceInitializationType", "UsageType"
-    ]
-)
-
-export_to_csv(
-    query=f"""
-        SELECT ApiName, ExpressionSet.ApiName, DecimalScale, Description, EndDateTime, ExpressionSetDefinitionVerId,
-               ExpressionSetId, Id, IsActive, IsDeleted, Name, Rank, StartDateTime, VersionNumber
-        FROM ExpressionSetVersion
-        WHERE ApiName = '{api_name_versioned}'
-    """,
-    filename="data/ExpressionSetVersion.csv",
-    fields=[
-        "ApiName", "ExpressionSet.ApiName", "DecimalScale", "Description", "EndDateTime", "ExpressionSetDefinitionVerId",
-        "ExpressionSetId", "Id", "IsActive", "IsDeleted", "Name", "Rank", "StartDateTime", "VersionNumber"
     ]
 )
 
