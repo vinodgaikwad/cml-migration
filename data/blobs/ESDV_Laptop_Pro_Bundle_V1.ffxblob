@@ -61,4 +61,6 @@ type Laptop : LineItem {
     @(defaultValue = "Intel Iris Xe Graphics", attributeSource = "PCM")
     string Graphics = ["Intel Iris Xe Graphics", "MSI Gaming GeForce RTX 3060"];
 
+    message(Display_Size == "24 Inch", "Its 24!", "Info");
+
 }

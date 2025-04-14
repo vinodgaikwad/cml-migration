@@ -192,10 +192,14 @@ def main():
 
     # === Insert ExpressionSetDefinitionContextDefinition
     apiname = ess["ApiName"]
-    cd_apiname = esdcd["ContextDefinitionApiName"]
+    cd_apiname = esdcd.get("ContextDefinitionApiName", "").strip()
+    if not cd_apiname:
+        print("❌ Invalid ExpressionSetDefinitionContextDefinition: missing ContextDefinitionApiName.")
+        print("⚠️ Please ensure your CML Expression Set is using an extended custom Context Definition.")
+        return
+    
     esdcd.pop("ContextDefinitionApiName", None)
     esdcd.pop("ExpressionSetApiName", None)
-    
     # Resolve ContextDefinition ID by DeveloperName
     q = f"SELECT Id FROM ContextDefinition WHERE DeveloperName = '{cd_apiname}'"
     resp = requests.get(query_url, headers=headers, params={"q": q})
