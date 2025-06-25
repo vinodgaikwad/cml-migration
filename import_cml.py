@@ -270,10 +270,12 @@ def main():
     uk_to_targetId_prod = {r["Name"]: r["Id"] for r in resp1.json().get("records", [])}
 
     # Query target org for ProductClassification
-    class_filter = ",".join(f"'{n}'" for n in classification_names)
-    q2 = f"SELECT Id, Name FROM ProductClassification WHERE Name IN ({class_filter})"
-    resp2 = requests.get(query_url, headers=headers, params={"q": q2})
-    uk_to_targetId_class = {r["Name"]: r["Id"] for r in resp2.json().get("records", [])}
+    uk_to_targetId_class = {}
+    if classification_names:
+        class_filter = ",".join(f"'{n}'" for n in classification_names)
+        q2 = f"SELECT Id, Name FROM ProductClassification WHERE Name IN ({class_filter})"
+        resp2 = requests.get(query_url, headers=headers, params={"q": q2})
+        uk_to_targetId_class = {r["Name"]: r["Id"] for r in resp2.json().get("records", [])}
 
     # Query target org for ProductRelatedComponent
     prc_filter = ",".join(f"'{n}'" for n in prc_parent_names)
@@ -325,7 +327,7 @@ def main():
 
         if ref_id.startswith("01t"):
             resolved_id = uk_to_targetId_prod.get(uk)
-        elif ref_id.startswith("11B"):
+        elif ref_id.startswith("11B") and uk_to_targetId_class:
             resolved_id = uk_to_targetId_class.get(uk)
         elif ref_id.startswith("0dS"):
             resolved_id = uk_to_targetId_prc.get(uk)
