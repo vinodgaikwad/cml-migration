@@ -35,7 +35,7 @@ def get_field_value(rec, field):
     return rec.get(field, "")
 
 # === Export CSV Helper ===
-def export_to_csv(query, filename, fields, alias="srcOrg"):
+def export_to_csv(query, filename, fields, alias="vpdevpro"):
     print(f"📦 Exporting: {filename.replace('data/', '')}")
     print("🔍 SOQL Query:", query.strip())
     
@@ -71,7 +71,7 @@ def export_to_csv(query, filename, fields, alias="srcOrg"):
     print(f"✅ {len(records)} records fetched for {filename}")
 
     os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with open(filename, mode="w", newline="") as file:
+    with open(filename, mode="w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(fields)
         for rec in records:
@@ -81,7 +81,7 @@ def export_to_csv(query, filename, fields, alias="srcOrg"):
     
 
 # === Blob Download Helper ===
-def download_constraint_model_blobs(alias="srcOrg", input_csv="data/ExpressionSetDefinitionVersion.csv"):
+def download_constraint_model_blobs(alias="vpdevpro", input_csv="data/ExpressionSetDefinitionVersion.csv"):
     print("📥 Downloading ConstraintModel blobs...")
 
     try:

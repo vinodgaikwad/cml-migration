@@ -6,7 +6,7 @@ import subprocess
 
 DATA_DIR = "data"
 BLOB_DIR = os.path.join(DATA_DIR, "blobs")
-TARGET_ALIAS = "tgtOrg"
+TARGET_ALIAS = "vpuat"
 
 access_token = None
 instance_url = None
@@ -34,7 +34,7 @@ def get_auth():
 
 # === CSV Loader ===
 def read_csv(filename):
-    with open(os.path.join(DATA_DIR, filename), newline="") as f:
+    with open(os.path.join(DATA_DIR, filename), newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 # === REST: POST ===
